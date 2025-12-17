@@ -58,21 +58,66 @@ void OnTick()
          {
            if(rangeHigh>0 && rangeLow>0)
           {
-           if(bid>rangeHigh)
+           //if(bid>rangeHigh)
             {
              //buy
              double lots=calcLots();
              Print("==============we buy ",lots," now=======================");
-             int ticket=OrderSend(_Symbol,OP_BUY,lots,Ask,100,rangeLow,0,"Mt4 buy range breakout",MAGIC,0,clrBlue);
-             Print("Ticket number: ",ticket);
+             // Pip calculation (4 & 5 digit safe)
+               double pip = (Digits == 3 || Digits == 5) ? 10 * Point : Point;
+            
+               double buffer = 2 * pip;   // avoid spread / stop level issues
+            
+               /* ================= BUY STOP ================= */
+               double buyPrice = rangeHigh + buffer;
+               double buySL    = rangeLow;                 // RANGE LOW SL
+               
+            
+               int buyTicket = OrderSend(
+                  Symbol(),
+                  OP_BUYSTOP,
+                  lots,
+                  NormalizeDouble(buyPrice, Digits),
+                  3,
+                  NormalizeDouble(buySL, Digits),
+                  0,
+                  "Range Breakout BUY",
+                  MAGIC,
+                  tradingTimeEnd,
+                  clrBlue
+               );
+            
+               Print("BUY STOP Ticket=", buyTicket, " Error=", GetLastError());
              isTrade=true;
-            }else if(bid<rangeLow)
+             
+            }
+            //else if(bid<rangeLow)
             {
              //sell 
              double lots=calcLots();
              Print("==============we sell ",lots," now======================");
-             int ticket=OrderSend(_Symbol,OP_SELL,lots,Bid,100,rangeHigh,0,"Mt4 sell  range breakout",MAGIC,0,clrRed);
-             Print("Ticket number: ",ticket);
+             // Pip calculation (4 & 5 digit safe)
+            double pip = (Digits == 3 || Digits == 5) ? 10 * Point : Point;
+            double buffer = 2 * pip;   // avoid spread / stop level issues
+            double sellPrice = rangeLow - buffer;
+            double sellSL    = rangeHigh;                // RANGE HIGH SL
+           
+         
+            int sellTicket = OrderSend(
+               Symbol(),
+               OP_SELLSTOP,
+               lots,
+               NormalizeDouble(sellPrice, Digits),
+               3,
+               NormalizeDouble(sellSL, Digits),
+               0,
+               "Range Breakout SELL",
+               MAGIC,
+               tradingTimeEnd,
+               clrRed
+            );
+         
+            Print("SELL STOP Ticket=", sellTicket, " Error=", GetLastError());
              isTrade=true;
                
             }
@@ -177,8 +222,10 @@ double calcLots()
    double rangeSize=rangeHigh-rangeLow;
    
    double riskperLot=rangeSize/tickSize*tickValue;
-   
    double RiskMoney=AccountInfoDouble(ACCOUNT_BALANCE)*0.01*Riskpercent;
+   Print("Riskmoney: ",RiskMoney," riskperlot: ",riskperLot);
+   
+   
    
    double lots=RiskMoney/riskperLot;
    
@@ -191,6 +238,16 @@ double calcLots()
       " | min = ", MarketInfo(Symbol(), MODE_MINLOT),
       " | max = ", MarketInfo(Symbol(), MODE_MAXLOT),
       " | step = ", MarketInfo(Symbol(), MODE_LOTSTEP));
+      
+   double minLots=MarketInfo(Symbol(), MODE_MINLOT);
+   double maxLots=MarketInfo(Symbol(), MODE_MAXLOT);
+     if(lots<minLots)
+       {
+        lots=minLots;
+       }else if(lots>maxLots)
+       {
+        lots=maxLots;        
+       }    
 
    return lots;
 }
