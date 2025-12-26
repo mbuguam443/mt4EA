@@ -8,6 +8,13 @@
 #property version   "1.00"
 #property strict
 
+
+enum BREAKOUT_MODE
+  {
+    ONE_SIDED=1,
+    TWO_SIDED=2
+  };
+input BREAKOUT_MODE TriggerMode=ONE_SIDED;
 input int MAGIC = 123456;
 input double Riskpercent=2;
 input int RangeStartHour=3;
@@ -21,7 +28,7 @@ input int TradingEndMin=0;
 datetime rangeTimeStart;
 datetime rangeTimeEnd;
 datetime tradingTimeEnd;
-
+static bool handled = false;
 
 double rangeHigh;
 double rangeLow;
@@ -48,6 +55,19 @@ void OnTick()
   {
     calcTimes();
     calcRange();
+    Comment("Closed Profit:============= ",CalculateDailyProfitTotal());
+    if(!handled && IsBreakoutTriggered())
+      {
+         if(TriggerMode==ONE_SIDED)
+           {
+             DeleteOtherPending();
+             handled = true; // prevent repeated execution
+           }else if(TriggerMode==TWO_SIDED)
+           {
+             handled=true;     
+           }
+         
+      }
     
     double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
     
@@ -150,6 +170,7 @@ void calcTimes()
       isTrade=false;
       rangeHigh=0;
       rangeLow=0;
+      handled = false;
      }
    
    rangeTimeStart=StructToTime(dt);
@@ -298,3 +319,81 @@ void CloseAllPositions(int magic)
       }
    }
 }
+bool IsBreakoutTriggered()
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if(OrderMagicNumber() == MAGIC){ 
+             if(OrderType() == OP_BUY)
+               {
+                  Print("*************************A OP_BUY Position has been triggered");
+                  
+                  return true; // pending has triggered
+                  
+               }
+               if(OrderType() == OP_SELL)
+               {
+                  Print("*************************A OP_SELL Position has been triggered");
+                  
+                  return true; // pending has triggered
+                  
+               }
+         }
+      }
+   }
+   return false;
+}
+
+void DeleteOtherPending()
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if(OrderMagicNumber() == MAGIC &&
+           (OrderType() == OP_BUYSTOP || OrderType() == OP_SELLSTOP))
+         {
+            int results=OrderDelete(OrderTicket());
+            Print("#################Order deleted");
+         }
+      }
+   }
+}
+
+double CalculateDailyProfitTotal()
+{
+   double profit = 0.0;
+
+   // Start of today (broker time)
+   datetime todayStart = StrToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   /* ================= CLOSED TRADES (TODAY) ================= */
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY))
+      {
+         if(OrderCloseTime() >= todayStart)
+         {
+            profit += OrderProfit()
+                    + OrderCommission()
+                    + OrderSwap();
+         }
+      }
+   }
+
+   /* ================= OPEN TRADES (FLOATING) ================= */
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         profit += OrderProfit()
+                 + OrderCommission()
+                 + OrderSwap();
+      }
+   }
+
+   return profit;
+}
+

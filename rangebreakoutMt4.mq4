@@ -9,6 +9,13 @@
 #property strict
 
 input int MAGIC = 123456;
+enum BREAKOUT_MODE
+  {
+    ONE_SIDED=1,
+    TWO_SIDED=2
+  };
+input BREAKOUT_MODE TriggerMode=ONE_SIDED;
+
 input double Riskpercent=2;
 input int RangeStartHour=3;
 input int RangeStartMin=0;
@@ -25,6 +32,7 @@ datetime tradingTimeEnd;
 
 double rangeHigh;
 double rangeLow;
+static bool handled = false;
 
 bool isTrade;
 
@@ -48,7 +56,18 @@ void OnTick()
   {
     calcTimes();
     calcRange();
-    
+    if(!handled && IsBreakoutTriggered())
+      {
+         if(TriggerMode==ONE_SIDED)
+           {
+             DeleteOtherPending();
+             handled = true; // prevent repeated execution
+           }else if(TriggerMode==TWO_SIDED)
+           {
+             handled=true;     
+           }
+         
+      }
     double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
     
     if(TimeCurrent()>rangeTimeEnd && TimeCurrent() < tradingTimeEnd)
@@ -295,6 +314,48 @@ void CloseAllPositions(int magic)
       {
          Print("Close failed. Ticket=", OrderTicket(),
                " Error=", GetLastError());
+      }
+   }
+}
+bool IsBreakoutTriggered()
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if(OrderMagicNumber() == MAGIC){ 
+             if(OrderType() == OP_BUY)
+               {
+                  Print("*************************A OP_BUY Position has been triggered");
+                  
+                  return true; // pending has triggered
+                  
+               }
+               if(OrderType() == OP_SELL)
+               {
+                  Print("*************************A OP_SELL Position has been triggered");
+                  
+                  return true; // pending has triggered
+                  
+               }
+         }
+      }
+   }
+   return false;
+}
+
+void DeleteOtherPending()
+{
+   for(int i=OrdersTotal()-1; i>=0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         if(OrderMagicNumber() == MAGIC &&
+           (OrderType() == OP_BUYSTOP || OrderType() == OP_SELLSTOP))
+         {
+            int results=OrderDelete(OrderTicket());
+            Print("#################Order deleted");
+         }
       }
    }
 }
