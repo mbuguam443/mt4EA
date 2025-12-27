@@ -8,15 +8,18 @@
 #property version   "1.00"
 #property strict
 
-input int MAGIC = 123456;
+
 enum BREAKOUT_MODE
   {
     ONE_SIDED=1,
     TWO_SIDED=2
   };
 input BREAKOUT_MODE TriggerMode=ONE_SIDED;
-
+input int MAGIC = 123456;
 input double Riskpercent=2;
+input bool TrailingStop=false;
+input double rangePercent=0; // Range sl Percent (0=off)
+input int RangeSizeFilter=1000; //RangeSizeFilter (0=off) 
 input int RangeStartHour=3;
 input int RangeStartMin=0;
 input int RangeEndHour=6;
@@ -28,11 +31,10 @@ input int TradingEndMin=0;
 datetime rangeTimeStart;
 datetime rangeTimeEnd;
 datetime tradingTimeEnd;
-
+static bool handled = false;
 
 double rangeHigh;
 double rangeLow;
-static bool handled = false;
 
 bool isTrade;
 
@@ -56,6 +58,7 @@ void OnTick()
   {
     calcTimes();
     calcRange();
+    Comment("Daily Profit:============= ",CalculateDailyProfitTotal());
     if(!handled && IsBreakoutTriggered())
       {
          if(TriggerMode==ONE_SIDED)
@@ -68,6 +71,7 @@ void OnTick()
            }
          
       }
+    
     double bid=SymbolInfoDouble(_Symbol,SYMBOL_BID);
     
     if(TimeCurrent()>rangeTimeEnd && TimeCurrent() < tradingTimeEnd)
@@ -75,8 +79,9 @@ void OnTick()
       
        if(!isTrade)
          {
-           if(rangeHigh>0 && rangeLow>0)
+           if(rangeHigh>0 && rangeLow>0 &&(RangeSizeFilter==0?true:(rangeHigh-rangeLow) <RangeSizeFilter))
           {
+            Print("!!!!!!!!!!!!!!!!!!! rangeHigh: ",rangeHigh," rangeLow: ",rangeLow," range diff: ",rangeHigh-rangeLow," rangeFilter: ",RangeSizeFilter);
            //if(bid>rangeHigh)
             {
              //buy
@@ -89,7 +94,10 @@ void OnTick()
             
                /* ================= BUY STOP ================= */
                double buyPrice = rangeHigh + buffer;
-               double buySL    = rangeLow;                 // RANGE LOW SL
+               
+               
+               
+               double buySL    = rangePercent==0? rangeLow :buyPrice-rangePercent*0.01*(rangeHigh-rangeLow);                 // RANGE LOW SL
                
             
                int buyTicket = OrderSend(
@@ -119,7 +127,10 @@ void OnTick()
             double pip = (Digits == 3 || Digits == 5) ? 10 * Point : Point;
             double buffer = 2 * pip;   // avoid spread / stop level issues
             double sellPrice = rangeLow - buffer;
-            double sellSL    = rangeHigh;                // RANGE HIGH SL
+            
+            double sellSL    = rangePercent==0? rangeHigh :sellPrice+rangePercent*0.01*(rangeHigh-rangeLow);;
+            
+           
            
          
             int sellTicket = OrderSend(
@@ -151,8 +162,11 @@ void OnTick()
          
           CloseAllPositions(MAGIC);
       }
-      
-   
+     if(TrailingStop)
+       {
+        trailingStopLoss();
+       } 
+    
   }
 //+------------------------------------------------------------------+
 
@@ -169,6 +183,7 @@ void calcTimes()
       isTrade=false;
       rangeHigh=0;
       rangeLow=0;
+      handled = false;
      }
    
    rangeTimeStart=StructToTime(dt);
@@ -238,7 +253,7 @@ double calcLots()
    double tickSize=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_SIZE);
    double tickValue=SymbolInfoDouble(_Symbol,SYMBOL_TRADE_TICK_VALUE);
    double step   = MarketInfo(Symbol(), MODE_LOTSTEP);
-   double rangeSize=rangeHigh-rangeLow;
+   double rangeSize=rangePercent==0?rangeHigh-rangeLow:rangePercent*0.01*(rangeHigh-rangeLow);
    
    double riskperLot=rangeSize/tickSize*tickValue;
    double RiskMoney=AccountInfoDouble(ACCOUNT_BALANCE)*0.01*Riskpercent;
@@ -359,3 +374,84 @@ void DeleteOtherPending()
       }
    }
 }
+
+double CalculateDailyProfitTotal()
+{
+   double profit = 0.0;
+
+   // Start of today (broker time)
+   datetime todayStart = StrToTime(TimeToString(TimeCurrent(), TIME_DATE));
+
+   /* ================= CLOSED TRADES (TODAY) ================= */
+   for(int i = OrdersHistoryTotal() - 1; i >= 0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_HISTORY))
+      {
+         if(OrderCloseTime() >= todayStart)
+         {
+            profit += OrderProfit()
+                    + OrderCommission()
+                    + OrderSwap();
+         }
+      }
+   }
+
+   /* ================= OPEN TRADES (FLOATING) ================= */
+   for(int i = OrdersTotal() - 1; i >= 0; i--)
+   {
+      if(OrderSelect(i, SELECT_BY_POS, MODE_TRADES))
+      {
+         profit += OrderProfit()
+                 + OrderCommission()
+                 + OrderSwap();
+      }
+   }
+
+   return profit;
+}
+
+
+void trailingStopLoss()
+{
+    for(int i=OrdersTotal()-1;i>=0;i--)
+      {
+       if(OrderSelect(i,SELECT_BY_POS,MODE_TRADES))
+         {
+         if(OrderMagicNumber()==MAGIC)
+           {
+             if(OrderType()==OP_BUY)
+               {
+                if(Bid >OrderOpenPrice()+(rangeHigh-rangeLow))
+                  {
+                  
+                   double sl=Bid-(rangeHigh-rangeLow);
+                   sl=NormalizeDouble(sl,_Digits);
+                   if(sl>OrderStopLoss()|| OrderStopLoss()==0)
+                     {
+                      if(OrderModify(OrderTicket(),OrderOpenPrice(),sl,OrderTakeProfit(),OrderExpiration()))
+                      {
+                       Print("@@@@@@@@@@@@@@@@@@@@@@Buy Order Modified Successfuly");
+                      }
+                     }
+                  }
+               }else if(OrderType()==OP_SELL)
+               {
+                  if(Ask < OrderOpenPrice()-(rangeHigh-rangeLow))
+                    {
+                     
+                     double sl=Ask+(rangeHigh-rangeLow);
+                     sl=NormalizeDouble(sl,_Digits);
+                     if(sl<OrderStopLoss() || OrderStopLoss()==0)
+                       {
+                         if(OrderModify(OrderTicket(),OrderOpenPrice(),sl,OrderTakeProfit(),OrderExpiration()))
+                           {
+                            Print("@@@@@@@@@@@@@@@@@@@@@@@@Sell Order Modified Succeffuly");
+                           }
+                       }
+                    }
+               }
+            }   
+         }
+      }
+}
+
